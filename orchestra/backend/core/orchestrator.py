@@ -5,6 +5,8 @@ Pass 1: Each agent generates initial output based on Brief
 Pass 2: Each agent refines its output after seeing what others wrote
 """
 
+from typing import Generator
+
 from .context import AgentContext
 from .voice_store import load_voice_profile
 from ..agents.planner import PlannerAgent
@@ -23,6 +25,85 @@ def _show(agent_name: str, result, pass_label: str = ""):
     print(f"└─ [{label} Output]")
     for line in result.output.splitlines():
         print(f"   {line}")
+
+
+def run_pipeline_stream(idea: str, voice_profile_name: str = "default") -> Generator[dict, None, None]:
+    """
+    Generator version of the pipeline. Yields structured events for SSE streaming.
+    Each event is a dict: {"event": "<name>", "data": {...}}
+    """
+    voice_profile = load_voice_profile(voice_profile_name)
+    context = AgentContext()
+
+    # Planner
+    yield {"event": "planner_started", "data": {}}
+    planner = PlannerAgent()
+    context.brief = planner.run(idea=idea, voice_profile=voice_profile)
+    yield {"event": "planner_completed", "data": {"brief": context.brief.to_dict()}}
+
+    # Pass 1
+    instagram_agent = InstagramAgent()
+    threads_agent = ThreadsAgent()
+    linkedin_agent = LinkedInAgent()
+
+    yield {"event": "instagram_pass1_started", "data": {}}
+    ig1 = instagram_agent.run(brief=context.brief)
+    context.instagram_output = ig1.output
+    yield {"event": "instagram_pass1_completed", "data": {"thinking": ig1.thinking, "output": ig1.output}}
+
+    yield {"event": "threads_pass1_started", "data": {}}
+    th1 = threads_agent.run(brief=context.brief, instagram_output=context.instagram_output)
+    context.threads_output = th1.output
+    yield {"event": "threads_pass1_completed", "data": {"thinking": th1.thinking, "output": th1.output}}
+
+    yield {"event": "linkedin_pass1_started", "data": {}}
+    li1 = linkedin_agent.run(brief=context.brief, instagram_output=context.instagram_output, threads_output=context.threads_output)
+    context.linkedin_output = li1.output
+    yield {"event": "linkedin_pass1_completed", "data": {"thinking": li1.thinking, "output": li1.output}}
+
+    # Pass 2
+    yield {"event": "instagram_pass2_started", "data": {}}
+    ig2 = instagram_agent.run(brief=context.brief, threads_output=context.threads_output, linkedin_output=context.linkedin_output, is_refinement=True)
+    context.instagram_output = ig2.output
+    yield {"event": "instagram_pass2_completed", "data": {"thinking": ig2.thinking, "output": ig2.output}}
+
+    yield {"event": "threads_pass2_started", "data": {}}
+    th2 = threads_agent.run(brief=context.brief, instagram_output=context.instagram_output, linkedin_output=context.linkedin_output, is_refinement=True)
+    context.threads_output = th2.output
+    yield {"event": "threads_pass2_completed", "data": {"thinking": th2.thinking, "output": th2.output}}
+
+    yield {"event": "linkedin_pass2_started", "data": {}}
+    li2 = linkedin_agent.run(brief=context.brief, instagram_output=context.instagram_output, threads_output=context.threads_output, is_refinement=True)
+    context.linkedin_output = li2.output
+    yield {"event": "linkedin_pass2_completed", "data": {"thinking": li2.thinking, "output": li2.output}}
+
+    # Critic
+    yield {"event": "critic_started", "data": {}}
+    critic = CriticAgent()
+    critic_review = critic.run(
+        brief=context.brief,
+        instagram_output=context.instagram_output,
+        threads_output=context.threads_output,
+        linkedin_output=context.linkedin_output,
+        voice_profile=voice_profile
+    )
+    yield {"event": "critic_completed", "data": {
+        "notes": critic_review.notes,
+        "instagram_improved": critic_review.instagram_improved,
+        "threads_improved": critic_review.threads_improved,
+        "linkedin_improved": critic_review.linkedin_improved,
+    }}
+
+    yield {"event": "pipeline_completed", "data": {
+        "brief": context.brief.to_dict(),
+        "instagram": context.instagram_output,
+        "threads": context.threads_output,
+        "linkedin": context.linkedin_output,
+        "instagram_final": critic_review.instagram_improved,
+        "threads_final": critic_review.threads_improved,
+        "linkedin_final": critic_review.linkedin_improved,
+        "critic_notes": critic_review.notes,
+    }}
 
 
 def run_full_pipeline(idea: str, voice_profile_name: str = "default") -> dict:
