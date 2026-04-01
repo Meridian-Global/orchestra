@@ -18,10 +18,9 @@ from backend.core.orchestrator import run_full_pipeline
 
 
 def print_section(title: str, content: str):
-    """Print a formatted section"""
-    print(f"\n{'='*60}")
+    print(f"\n{'─'*60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'─'*60}")
     print(content)
 
 
@@ -32,24 +31,27 @@ def main():
 
     idea = " ".join(sys.argv[1:])
 
-    print("\n🎼 ORCHESTRA - Multi-Agent Content System")
-    print(f"Idea: {idea}\n")
+    print("\n🎼 ORCHESTRA — Multi-Agent Content System")
+    print(f"   Idea: {idea}")
 
-    # Run full pipeline with two-pass refinement
+    # Pipeline runs and prints thinking live
     result = run_full_pipeline(idea)
 
-    # Display results
-    print_section("BRIEF", result["brief"].to_string())
-    print_section("INSTAGRAM (after 2 passes)", result["instagram"])
-    print_section("THREADS (after 2 passes)", result["threads"])
-    print_section("LINKEDIN (after 2 passes)", result["linkedin"])
-    print_section("INSTAGRAM (CRITIC IMPROVED)", result["critic_review"].instagram_improved)
-    print_section("THREADS (CRITIC IMPROVED)", result["critic_review"].threads_improved)
-    print_section("LINKEDIN (CRITIC IMPROVED)", result["critic_review"].linkedin_improved)
+    # Final outputs
+    cr = result["critic_review"]
 
-    print(f"\n{'='*60}")
-    print("✅ Pipeline complete!")
-    print(f"{'='*60}\n")
+    print(f"\n\n{'═'*60}")
+    print("  CRITIC NOTES")
+    print(f"{'═'*60}")
+    print(cr.notes)
+
+    print_section("INSTAGRAM — final", cr.instagram_improved)
+    print_section("THREADS — final", cr.threads_improved)
+    print_section("LINKEDIN — final", cr.linkedin_improved)
+
+    print(f"\n{'═'*60}")
+    print("  Pipeline complete.")
+    print(f"{'═'*60}\n")
 
 
 if __name__ == "__main__":

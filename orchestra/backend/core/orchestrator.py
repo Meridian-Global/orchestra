@@ -14,6 +14,17 @@ from ..agents.linkedin import LinkedInAgent
 from ..agents.critic import CriticAgent, CriticReview
 
 
+def _show(agent_name: str, result, pass_label: str = ""):
+    """Print agent thinking + output inline as pipeline runs."""
+    label = f"{agent_name}{' · ' + pass_label if pass_label else ''}"
+    print(f"\n┌─ [{label} Thinking]")
+    for line in result.thinking.splitlines():
+        print(f"│  {line}")
+    print(f"└─ [{label} Output]")
+    for line in result.output.splitlines():
+        print(f"   {line}")
+
+
 def run_full_pipeline(idea: str, voice_profile_name: str = "default") -> dict:
     """
     Run the complete multi-agent content generation pipeline.
@@ -25,68 +36,58 @@ def run_full_pipeline(idea: str, voice_profile_name: str = "default") -> dict:
     Returns:
         dict with keys: brief, instagram, threads, linkedin, critic_review
     """
-    # Load voice profile
     voice_profile = load_voice_profile(voice_profile_name)
-
-    # Initialize shared context
     context = AgentContext()
 
-    # Step 1: Planner creates Brief
-    print("🎯 Running Planner...")
+    # Step 1: Planner
+    print("\n══════════════════════════════════════════════════")
+    print("  PLANNER")
+    print("══════════════════════════════════════════════════")
     planner = PlannerAgent()
     context.brief = planner.run(idea=idea, voice_profile=voice_profile)
+    print(context.brief.to_string())
 
-    # Step 2: First Pass - Initial content generation
-    print("📱 First Pass: Generating initial content...")
+    # Step 2: First Pass
+    print("\n══════════════════════════════════════════════════")
+    print("  PASS 1 — Initial Generation")
+    print("══════════════════════════════════════════════════")
 
-    print("  → Instagram (pass 1)")
     instagram_agent = InstagramAgent()
-    context.instagram_output = instagram_agent.run(brief=context.brief)
+    ig1 = instagram_agent.run(brief=context.brief)
+    _show("Instagram", ig1, "pass 1")
+    context.instagram_output = ig1.output
 
-    print("  → Threads (pass 1)")
     threads_agent = ThreadsAgent()
-    context.threads_output = threads_agent.run(
-        brief=context.brief,
-        instagram_output=context.instagram_output
-    )
+    th1 = threads_agent.run(brief=context.brief, instagram_output=context.instagram_output)
+    _show("Threads", th1, "pass 1")
+    context.threads_output = th1.output
 
-    print("  → LinkedIn (pass 1)")
     linkedin_agent = LinkedInAgent()
-    context.linkedin_output = linkedin_agent.run(
-        brief=context.brief,
-        instagram_output=context.instagram_output,
-        threads_output=context.threads_output
-    )
+    li1 = linkedin_agent.run(brief=context.brief, instagram_output=context.instagram_output, threads_output=context.threads_output)
+    _show("LinkedIn", li1, "pass 1")
+    context.linkedin_output = li1.output
 
-    # Step 3: Second Pass - Refinement with full context
-    print("\n🔄 Second Pass: Refining with full context...")
+    # Step 3: Second Pass
+    print("\n══════════════════════════════════════════════════")
+    print("  PASS 2 — Refinement with full context")
+    print("══════════════════════════════════════════════════")
 
-    print("  → Instagram (pass 2)")
-    context.instagram_output = instagram_agent.run(
-        brief=context.brief,
-        threads_output=context.threads_output,
-        linkedin_output=context.linkedin_output,
-        is_refinement=True
-    )
+    ig2 = instagram_agent.run(brief=context.brief, threads_output=context.threads_output, linkedin_output=context.linkedin_output, is_refinement=True)
+    _show("Instagram", ig2, "pass 2")
+    context.instagram_output = ig2.output
 
-    print("  → Threads (pass 2)")
-    context.threads_output = threads_agent.run(
-        brief=context.brief,
-        instagram_output=context.instagram_output,
-        linkedin_output=context.linkedin_output,
-        is_refinement=True
-    )
+    th2 = threads_agent.run(brief=context.brief, instagram_output=context.instagram_output, linkedin_output=context.linkedin_output, is_refinement=True)
+    _show("Threads", th2, "pass 2")
+    context.threads_output = th2.output
 
-    print("  → LinkedIn (pass 2)")
-    context.linkedin_output = linkedin_agent.run(
-        brief=context.brief,
-        instagram_output=context.instagram_output,
-        threads_output=context.threads_output,
-        is_refinement=True
-    )
+    li2 = linkedin_agent.run(brief=context.brief, instagram_output=context.instagram_output, threads_output=context.threads_output, is_refinement=True)
+    _show("LinkedIn", li2, "pass 2")
+    context.linkedin_output = li2.output
 
-    # Step 4: Critic reviews and rewrites
-    print("\n🎭 Running Critic...")
+    # Step 4: Critic
+    print("\n══════════════════════════════════════════════════")
+    print("  CRITIC")
+    print("══════════════════════════════════════════════════")
     critic = CriticAgent()
     critic_review = critic.run(
         brief=context.brief,
@@ -96,7 +97,6 @@ def run_full_pipeline(idea: str, voice_profile_name: str = "default") -> dict:
         voice_profile=voice_profile
     )
 
-    # Return complete result
     return {
         "brief": context.brief,
         "instagram": context.instagram_output,
