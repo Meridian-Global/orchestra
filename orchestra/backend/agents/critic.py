@@ -7,8 +7,9 @@ from dataclasses import dataclass
 @dataclass
 class CriticReview:
     """
-    Critic's review with original and improved versions.
+    Critic's review with cross-platform analysis and improved versions.
     """
+    notes: str  # cross-platform analysis: duplicates, off-brand, weak spots
     instagram_original: str
     instagram_improved: str
     threads_original: str
@@ -19,23 +20,28 @@ class CriticReview:
 
 class CriticAgent(BaseAgent):
     """
-    Reviews all platform outputs against brand voice.
-    Rewrites each output to remove hedging, preachy tone, and explanatory fluff.
-    Returns both original and improved versions.
+    Reviews all platform outputs together.
+    Flags duplicated angles, off-brand tone, weak hooks/endings.
+    Rewrites with specific improvements, not generic advice.
     """
 
     def __init__(self):
         super().__init__(name="Critic")
 
     def build_prompt(self, brief: Brief, instagram_output: str, threads_output: str, linkedin_output: str, voice_profile: dict) -> str:
-        return f"""You are a brand voice editor. Your job: make content more direct, observation-driven, and punchy.
+        avoid_phrases = ", ".join(f'"{p}"' for p in voice_profile.get("content_rules", {}).get("avoid_phrases", []))
+        voice_not = ", ".join(voice_profile.get("voice", {}).get("not", []))
+        voice_adj = ", ".join(voice_profile.get("voice", {}).get("adjectives", []))
+
+        return f"""You are a sharp brand voice editor reviewing three platform posts written for the same idea.
 
 {brief.to_string()}
 
 BRAND VOICE:
-{json.dumps(voice_profile, indent=2)}
-
-GENERATED CONTENT:
+- Tone should be: {voice_adj}
+- Never sound: {voice_not}
+- Avoid phrases: {avoid_phrases}
+- Signature moves: lead with specific observation, show the work, end with question or next step
 
 === INSTAGRAM ===
 {instagram_output}
@@ -46,40 +52,32 @@ GENERATED CONTENT:
 === LINKEDIN ===
 {linkedin_output}
 
-YOUR TASK:
-For each platform, rewrite the content to remove:
-- Explanatory sentences that tell instead of show
-- Hedging language ("kind of", "maybe", "sometimes")
-- Preachy tone (drawing lessons FOR the reader)
-- Generic hashtags (only use specific ones)
-- Business-speak ("moving the needle", "game changer")
+STEP 1 — CROSS-PLATFORM ANALYSIS (be specific, not generic):
+Look at all three posts together and identify:
+1. Duplicated angles: are two posts making the same point or using the same hook?
+2. Off-brand moments: specific lines that sound corporate, preachy, or guru-ish
+3. Weak hooks or endings: which post opens or closes weakly, and exactly why
 
-Make the content:
-- Observation-driven (show what happened, not what you learned)
-- Concise (cut at least 20%)
-- Punchy (shorter sentences, stronger verbs)
-- More "I noticed this" than "here's what this means"
+STEP 2 — REWRITE each post to fix the issues you found:
+- Cut hedging language ("kind of", "maybe", "sometimes")
+- Cut explanatory sentences that tell instead of show
+- Cut business-speak and preachy takeaways
+- Make each post's angle distinct from the others
+- Keep hashtags specific or remove them entirely
+- Shorten by at least 15%
 
 Return ONLY valid JSON with this exact structure:
 {{
+  "notes": "2-4 sentences: what you found across all three posts — specific issues, not generic feedback",
   "instagram_improved": "improved instagram caption here",
   "threads_improved": "improved threads post here",
   "linkedin_improved": "improved linkedin post here"
 }}
 
-RULES:
-- Keep the core insight from each original post
-- Keep the same rough structure (don't change from carousel to single post)
-- Remove any cutesy asides ("Spoiler:", "Plot twist:")
-- Make hashtags specific or remove them entirely
-- If the original is already strong, minimal edits are fine
-- Return ONLY the JSON, no other text
+Return ONLY the JSON, no other text.
 """
 
     def run(self, brief: Brief, instagram_output: str, threads_output: str, linkedin_output: str, voice_profile: dict) -> CriticReview:
-        """
-        Override run() to parse JSON and return CriticReview object.
-        """
         prompt = self.build_prompt(
             brief=brief,
             instagram_output=instagram_output,
@@ -99,12 +97,9 @@ RULES:
             response = response[:-3]
         response = response.strip()
 
-        # Parse JSON response
         try:
-            # Try parsing as-is first
             improved_data = json.loads(response)
         except json.JSONDecodeError:
-            # If that fails, try with strict=False to handle edge cases
             try:
                 improved_data = json.loads(response, strict=False)
             except json.JSONDecodeError as e:
@@ -112,6 +107,7 @@ RULES:
 
         try:
             return CriticReview(
+                notes=improved_data.get("notes", ""),
                 instagram_original=instagram_output,
                 instagram_improved=improved_data["instagram_improved"],
                 threads_original=threads_output,
