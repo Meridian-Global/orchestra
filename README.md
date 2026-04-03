@@ -53,12 +53,16 @@ This makes the outputs genuinely different from each other, and the interaction 
 │   │   │   ├── orchestrator.py  # Pipeline runner + SSE event generator
 │   │   │   └── voice_store.py   # Load brand voice YAML
 │   │   ├── api/
-│   │   │   └── routes.py        # POST /api/run — SSE streaming endpoint
+│   │   │   └── routes.py        # POST /api/run (SSE), POST /api/publish/linkedin
+│   │   ├── integrations/
+│   │   │   ├── __init__.py
+│   │   │   └── linkedin_publisher.py  # LinkedIn UGC Posts API client
 │   │   ├── voice/
 │   │   │   └── default.yaml     # Your brand voice — edit this first
 │   │   └── main.py
 │   └── examples/
-│       └── run_cli.py           # Run the full pipeline in terminal
+│       ├── run_cli.py           # Run the full pipeline in terminal
+│       └── test_claude.py
 ├── frontend/                    # Next.js 14 app router
 │   ├── app/
 │   │   ├── page.tsx             # Main page — input, timeline, final outputs
@@ -116,6 +120,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional — defaults to claude-haiku-4-5 if not set
 ANTHROPIC_MODEL=claude-haiku-4-5
+
+# LinkedIn publishing (required for POST /api/publish/linkedin)
+# Get your access token from the LinkedIn Developer Portal
+# Get your person URN from https://api.linkedin.com/v2/userinfo
+LINKEDIN_ACCESS_TOKEN=your_linkedin_personal_access_token
+LINKEDIN_PERSON_URN=urn:li:person:your_person_id
 ```
 
 ---
@@ -176,15 +186,26 @@ No LangChain. No vector databases. No Tailwind. No external queue. Runs entirely
 
 ## Roadmap
 
-- [x] Core pipeline (planner → agents → critic)
+**Core**
+- [x] Planner → platform agents → critic pipeline
 - [x] Two-pass refinement (agents read each other's output)
-- [x] Brand voice YAML
+- [x] Brand voice YAML (Critic enforces it)
 - [x] FastAPI + SSE streaming endpoint
-- [x] Next.js frontend with live streaming cards
+- [x] Next.js frontend with live agent timeline
+
+**Publishing**
+- [x] LinkedIn publish endpoint (`POST /api/publish/linkedin`)
+- [ ] LinkedIn publish button in frontend (after generation completes)
+- [ ] Instagram publishing via Graph API
+
+**Input sources**
+- [ ] Gmail scanner — surface candidate ideas from inbox (`GET /api/ideas/scan`)
+- [ ] Input source toggle in frontend (manual ↔ Gmail scan mode)
+
+**Later**
 - [ ] Inline edit before publish
 - [ ] Export interaction log as image
-- [ ] Optional scheduling (APScheduler)
-- [ ] Platform publishing via APIs (Instagram Graph, LinkedIn API)
+- [ ] Scheduling (APScheduler)
 
 ---
 
