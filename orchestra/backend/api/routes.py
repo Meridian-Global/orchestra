@@ -1,9 +1,11 @@
 import json
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+import os
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..core.orchestrator import run_pipeline_stream
+from ..integrations.linkedin_publisher import publish_to_linkedin
 
 router = APIRouter()
 
@@ -11,6 +13,12 @@ router = APIRouter()
 class RunRequest(BaseModel):
     idea: str
     voice_profile: str = "default"
+
+
+class PublishLinkedInRequest(BaseModel):
+    content: str
+    access_token: str | None = None
+    person_urn: str | None = None
 
 
 def sse(event: dict) -> str:
@@ -51,3 +59,23 @@ async def run_pipeline(req: RunRequest):
             yield sse(event)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@router.post("/api/publish/linkedin")
+async def publish_linkedin(req: PublishLinkedInRequest):
+    access_token = req.access_token or os.getenv("LINKEDIN_ACCESS_TOKEN")
+    person_urn = req.person_urn or os.getenv("LINKEDIN_PERSON_URN")
+
+    if not access_token or not person_urn:
+        raise HTTPException(status_code=401, detail="LinkedIn credentials not configured")
+
+    result = publish_to_linkedin(
+        content=req.content,
+        access_token=access_token,
+        person_urn=person_urn,
+    )
+
+    if result["success"]:
+        return {"post_id": result["post_id"], "error": None}
+
+    return JSONResponse(status_code=502, content={"post_id": None, "error": result["error"]})
