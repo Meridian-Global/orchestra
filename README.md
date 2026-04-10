@@ -62,7 +62,6 @@ This makes the outputs genuinely different from each other, and the interaction 
 │   │   └── main.py
 │   └── examples/
 │       ├── run_cli.py           # Run the full pipeline in terminal
-│       └── test_claude.py
 ├── frontend/                    # Next.js 15 app router
 │   ├── app/
 │   │   ├── page.tsx             # Main page — input, timeline, final outputs
