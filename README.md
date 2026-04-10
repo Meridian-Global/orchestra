@@ -53,13 +53,15 @@ This makes the outputs genuinely different from each other, and the interaction 
 │   │   │   ├── orchestrator.py  # Pipeline runner + SSE event generator
 │   │   │   └── voice_store.py   # Load brand voice YAML
 │   │   ├── api/
-│   │   │   └── routes.py        # POST /api/run (SSE), POST /api/publish/linkedin
-│   │   ├── integrations/
-│   │   │   ├── __init__.py
-│   │   │   └── linkedin_publisher.py  # LinkedIn UGC Posts API client
-│   │   ├── voice/
-│   │   │   └── default.yaml     # Your brand voice — edit this first
+│   │   │   ├── routes.py              # Core route: POST /api/run
+│   │   │   └── integrations_routes.py # App-layer routes: Gmail + LinkedIn
+│   │   ├── app_layer/
+│   │   │   └── integrations/
+│   │   │       ├── gmail_scanner.py
+│   │   │       └── linkedin_publisher.py
 │   │   └── main.py
+│   ├── voice_profiles/
+│   │   └── default.yaml         # Your brand voice — edit this first
 │   └── examples/
 │       ├── run_cli.py           # Run the full pipeline in terminal
 ├── frontend/                    # Next.js 15 app router
@@ -89,10 +91,11 @@ cd orchestra
 # Backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-integrations.txt
 cp env.example .env        # add your ANTHROPIC_API_KEY
 
 # Edit your voice profile before your first run
-nano orchestra/backend/voice/default.yaml
+nano orchestra/voice_profiles/default.yaml
 
 # CLI demo (run from repo root)
 python orchestra/examples/run_cli.py "your idea here"
@@ -113,7 +116,7 @@ The API and frontend can also run independently. The frontend connects to the ba
 
 ## Local testing
 
-There isn't a full automated test suite in the repo yet, so the most useful checks right now are build checks plus a few API and UI smoke tests.
+There is now a small refactor-focused smoke suite for route wiring and import safety, plus a simple shell check for manual verification.
 
 ### Frontend
 
@@ -148,6 +151,9 @@ curl -N -X POST http://localhost:8000/api/run \
 
 # Gmail scanner route
 curl http://localhost:8000/api/ideas/scan
+
+# OpenAPI/manual route smoke check
+sh scripts/smoke_test_routes.sh
 ```
 
 Expected behavior:
@@ -166,6 +172,14 @@ Run the backend on `:8000` and the frontend on `:3000`, then:
 3. Confirm the pipeline streams from planner through critic
 4. Confirm the final Instagram, Threads, and LinkedIn outputs render
 5. Check both terminals for errors
+
+### Automated smoke tests
+
+Run the refactor-focused backend smoke tests from the repo root:
+
+```bash
+pytest tests/test_app_smoke.py tests/test_route_boundaries.py tests/test_import_paths.py -q
+```
 
 ---
 
@@ -196,7 +210,7 @@ GOOGLE_TOKEN_PATH=token.json
 
 ## Your brand voice
 
-`orchestra/backend/voice/default.yaml` is where Orchestra learns who you are. Edit it before your first run:
+`orchestra/voice_profiles/default.yaml` is where Orchestra learns who you are. Edit it before your first run:
 
 ```yaml
 creator:
@@ -240,6 +254,7 @@ That's it. One file, no framework to learn.
 | ------------ | ----------------------------------- |
 | LLM          | Claude (Anthropic)                  |
 | Backend      | Python + FastAPI                    |
+| App layer    | Gmail + LinkedIn integrations       |
 | Streaming    | Server-Sent Events                  |
 | Frontend     | Next.js 15 (app router, custom CSS) |
 | Voice config | YAML                                |
