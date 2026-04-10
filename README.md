@@ -1,37 +1,145 @@
 # Orchestra
 
-**Multi-agent content system for creators who publish across platforms.**
+**A multi-agent content engine. One idea in, platform-native content out — via a structured agent pipeline you can build on.**
 
-Orchestra takes a single idea and runs it through a coordinated team of AI agents — a planner, three platform writers, and a brand critic — each with a distinct role and job. The result is platform-native content for Instagram, Threads, and LinkedIn, along with a visible log of how the agents collaborated to get there.
+Orchestra is a backend orchestration layer, not a finished product. It coordinates a team of specialized AI agents that produce content for Instagram, Threads, and LinkedIn from a single input, streaming each step as Server-Sent Events.
+
+The frontend demo and current integrations (Gmail, LinkedIn publisher) are app-layer code that demonstrate one way to consume the engine. Future applications — a LinkedIn Chrome Extension, CLI tools, automation workflows — are separate surfaces that call the same core.
 
 Built by [Meridian Global](https://github.com/MeridianGlobal).
 
 ---
 
-## What it does
+## How it works
 
-You type one idea. Orchestra handles the rest:
+Every run goes through the same pipeline:
 
-1. **Strategic Brain (Planner)** reads your idea and your voice profile, then produces a structured brief — tone, audience, core angle, per-platform notes
-2. **Platform agents** (Visual Storyteller, Narrative Builder, Professional Framer) each write natively for their medium, reading each other's output before finalizing
-3. **Quality Judge (Critic)** reviews all three drafts against your brand voice, rewrites weak spots, and flags anything off-brand
-4. **You** review the final outputs and copy to publish
+1. **Planner** reads the idea and a voice profile YAML, produces a structured `Brief` — tone, audience, core angle, per-platform notes
+2. **Platform agents** (Instagram, Threads, LinkedIn) each write for their medium using the Brief, reading each other's first-pass drafts before finalizing
+3. **Critic** reviews all three drafts against the voice profile, rewrites weak spots, and returns improved versions
 
----
-
-## Why it's different
-
-Most "AI content tools" call the same model three times with different format instructions. Orchestra doesn't do that.
-
-The system is built around a **Brief object** — a structured dict that the Planner produces and every downstream agent reads from. Agents don't just see the original prompt; they see what other agents wrote and react to it. The Critic reads all three drafts simultaneously.
-
-This makes the outputs genuinely different from each other, and the interaction log genuinely interesting to read.
+The orchestrator streams each agent step as an SSE event. The caller receives outputs in real time with no polling.
 
 ---
 
-## Demo
+## Why it is different
 
-> GIF coming — [watch this repo](https://github.com/MeridianGlobal/orchestra)
+Most AI content tools run the same model with different prompts. Orchestra is structured differently at two levels.
+
+**The Brief is the backbone.** The Planner produces a structured dataclass — not free-form text — and every downstream agent reads from it. Agents are not responding to the original prompt; they are working from a shared strategic interpretation of it.
+
+**Agents react to each other.** Platform agents complete a first pass, then read each other's output before their second pass. The Critic reads all three simultaneously. This is a two-pass coordination loop, not three independent calls.
+
+---
+
+## Architecture
+
+```
+              [your app]
+                  |
+          POST /api/run
+          { idea, voice_profile }
+                  |
+           ┌──────▼──────┐
+           │   Orchestra │
+           │   (engine)  │
+           └──────┬──────┘
+Planner → Platform Agents → Critic
+(all streamed as SSE to caller)
+```
+
+**Repo boundary:**
+
+| Layer                      | Location                                     | Stable               |
+| -------------------------- | -------------------------------------------- | -------------------- |
+| Core agents + orchestrator | `orchestra/backend/agents/`, `backend/core/` | Yes                  |
+| Core API contract          | `POST /api/run`                              | Yes                  |
+| Voice profiles             | `orchestra/voice_profiles/`                  | Yes                  |
+| App-layer routes           | `backend/api/integrations_routes.py`         | No — app concern     |
+| App-layer integrations     | `backend/app_layer/integrations/`            | No — app concern     |
+| Frontend demo              | `frontend/`                                  | No — standalone demo |
+
+Future apps call `POST /api/run` and own their own source and publish logic. The core engine does not need to change.
+
+---
+
+## Core API
+
+The engine's stable contract is a single endpoint.
+
+**Request:**
+
+```json
+POST /api/run
+Content-Type: application/json
+
+{
+  "idea": "Your idea here",
+  "voice_profile": "default"
+}
+```
+
+**Response:** `Content-Type: text/event-stream`
+
+Each SSE message has the shape:
+
+```
+event: <event_name>
+data: <json_payload>
+```
+
+The pipeline emits 17 events in order, from `planner_started` through `pipeline_completed`. The final `pipeline_completed` event contains all platform outputs and critic notes in a single payload.
+
+Full event sequence, payload shapes, and data model schemas: see [`CORE_API.md`](./CORE_API.md).
+
+The integration routes (`POST /api/publish/linkedin`, `GET /api/ideas/scan`) live separately in `integrations_routes.py` and are not part of the stable core contract.
+
+---
+
+## Quickstart
+
+**Requirements:** Python 3.11+, an Anthropic API key
+
+```bash
+git clone https://github.com/MeridianGlobal/orchestra.git
+cd orchestra
+
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+cp env.example .env
+# add your ANTHROPIC_API_KEY to .env
+
+# Edit your voice profile before the first run
+nano orchestra/voice_profiles/default.yaml
+
+# CLI — runs the full pipeline in the terminal
+python orchestra/examples/run_cli.py "your idea here"
+
+# API server
+uvicorn orchestra.backend.main:app --reload
+```
+
+Test the engine directly:
+
+```bash
+curl -N -X POST http://localhost:8000/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "why small teams should document decisions", "voice_profile": "default"}'
+```
+
+**Optional — app-layer integration dependencies** (Gmail scanner, LinkedIn publisher):
+
+```bash
+pip install -r requirements-integrations.txt
+```
+
+**Frontend demo** — see [`frontend/STANDALONE.md`](./frontend/STANDALONE.md) for full details:
+
+```bash
+cd frontend && npm install && npm run dev
+# Configure NEXT_PUBLIC_API_BASE in frontend/.env.local
+```
 
 ---
 
@@ -39,178 +147,75 @@ This makes the outputs genuinely different from each other, and the interaction 
 
 ```
 .
-├── orchestra/                   ← Python package
+├── orchestra/                         # Python package
 │   ├── backend/
-│   │   ├── agents/              # One file per agent — easy to extend
+│   │   ├── agents/                    # One file per agent — easy to extend
 │   │   │   ├── base.py
 │   │   │   ├── planner.py
 │   │   │   ├── instagram.py
 │   │   │   ├── threads.py
 │   │   │   ├── linkedin.py
 │   │   │   └── critic.py
-│   │   ├── core/
-│   │   │   ├── brief.py         # The Brief dataclass — system spine
-│   │   │   ├── orchestrator.py  # Pipeline runner + SSE event generator
-│   │   │   └── voice_store.py   # Load brand voice YAML
+│   │   ├── core/                      # Engine internals
+│   │   │   ├── brief.py               # Brief dataclass — shared agent contract
+│   │   │   ├── context.py             # AgentContext — pipeline state
+│   │   │   ├── orchestrator.py        # Pipeline runner + SSE event emitter
+│   │   │   └── voice_store.py         # Voice profile loader
 │   │   ├── api/
-│   │   │   ├── routes.py              # Core route: POST /api/run
-│   │   │   └── integrations_routes.py # App-layer routes: Gmail + LinkedIn
+│   │   │   ├── routes.py              # Core: POST /api/run
+│   │   │   └── integrations_routes.py # App-layer: publish + scan routes
 │   │   ├── app_layer/
-│   │   │   └── integrations/
+│   │   │   └── integrations/          # App-layer only — not part of core
 │   │   │       ├── gmail_scanner.py
 │   │   │       └── linkedin_publisher.py
 │   │   └── main.py
 │   ├── voice_profiles/
-│   │   └── default.yaml         # Your brand voice — edit this first
+│   │   └── default.yaml               # Edit before first run
 │   └── examples/
-│       ├── run_cli.py           # Run the full pipeline in terminal
-├── frontend/                    # Next.js 15 app router
-│   ├── app/
-│   │   ├── page.tsx             # Main page — input, timeline, final outputs
-│   │   ├── layout.tsx
-│   │   └── globals.css
-│   ├── components/
-│   │   └── StreamCard.tsx       # Live agent output card with reveal animation
-│   └── lib/
-│       └── sse.ts               # SSE parser (fetch + ReadableStream)
-├── requirements.txt
-└── env.example
+│       ├── run_cli.py                  # Full pipeline, terminal output
+│       └── gmail_auth.py              # OAuth setup for Gmail scanner
+├── frontend/                           # Standalone Next.js demo
+├── tests/
+│   ├── conftest.py
+│   ├── test_app_smoke.py              # Route wiring + monkeypatched integration tests
+│   ├── test_route_boundaries.py       # Core / app-layer boundary enforcement
+│   └── test_import_paths.py           # Import path correctness
+├── scripts/
+│   └── smoke_test_routes.sh           # Manual route check against live server
+├── CORE_API.md                         # Full API contract
+├── requirements.txt                    # Core dependencies
+└── requirements-integrations.txt      # App-layer dependencies (Gmail, LinkedIn)
 ```
 
 ---
 
-## Quickstart
+## Testing
 
-**Requirements:** Python 3.11+, Node 18+, an Anthropic API key
+Install both requirement files, then run the suite:
 
 ```bash
-# Clone
-git clone https://github.com/MeridianGlobal/orchestra.git
-cd orchestra
-
-# Backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -r requirements-integrations.txt
-cp env.example .env        # add your ANTHROPIC_API_KEY
-
-# Edit your voice profile before your first run
-nano orchestra/voice_profiles/default.yaml
-
-# CLI demo (run from repo root)
-python orchestra/examples/run_cli.py "your idea here"
-
-# Start API server (run from repo root)
-uvicorn orchestra.backend.main:app --reload
-
-# Frontend (separate terminal)
-cd frontend
-npm install && npm run dev
+pip install -r requirements.txt -r requirements-integrations.txt
+pytest tests/ -q
 ```
 
-Open [localhost:3000](http://localhost:3000).
+The suite covers:
 
-The API and frontend can also run independently. The frontend connects to the backend at `http://localhost:8000` by default — change this in `frontend/.env.local`.
+- **Route wiring** — all routes reachable, correct status codes, correct content types
+- **Boundary enforcement** — core `routes.py` does not expose integration symbols; old `backend.integrations` path is gone
+- **Import correctness** — `app_layer.integrations` is the canonical integration location
+- **Monkeypatched integration tests** — LinkedIn publish and Gmail scan routes tested without real API calls
 
----
-
-## Local testing
-
-There is now a small refactor-focused smoke suite for route wiring and import safety, plus a simple shell check for manual verification.
-
-### Frontend
+Manual route smoke check against a running server:
 
 ```bash
-cd frontend
-npm install
-npm run build
-npm run dev
-```
-
-What to verify:
-
-- `npm run build` completes successfully
-- the app loads at `http://localhost:3000`
-- entering an idea and clicking `Run Orchestra` does not produce client-side errors
-- the live timeline renders streaming cards and the final output cards appear
-
-### Backend
-
-```bash
-source .venv/bin/activate
-uvicorn orchestra.backend.main:app --reload
-```
-
-Useful smoke tests:
-
-```bash
-# Main pipeline route (streams SSE)
-curl -N -X POST http://localhost:8000/api/run \
-  -H "Content-Type: application/json" \
-  -d '{"idea":"A post about why small teams should document decisions","voice_profile":"default"}'
-
-# Gmail scanner route
-curl http://localhost:8000/api/ideas/scan
-
-# OpenAPI/manual route smoke check
 sh scripts/smoke_test_routes.sh
 ```
 
-Expected behavior:
-
-- `/api/run` streams `event:` / `data:` messages in order
-- `/api/ideas/scan` returns Gmail ideas if authenticated
-- if Gmail is not set up yet, `/api/ideas/scan` should return:
-  `"Gmail not authenticated. Run: python orchestra/examples/gmail_auth.py"`
-
-### Full stack
-
-Run the backend on `:8000` and the frontend on `:3000`, then:
-
-1. Open `http://localhost:3000`
-2. Submit a test idea
-3. Confirm the pipeline streams from planner through critic
-4. Confirm the final Instagram, Threads, and LinkedIn outputs render
-5. Check both terminals for errors
-
-### Automated smoke tests
-
-Run the refactor-focused backend smoke tests from the repo root:
-
-```bash
-pytest tests/test_app_smoke.py tests/test_route_boundaries.py tests/test_import_paths.py -q
-```
-
 ---
 
-## Environment variables
+## Voice profile
 
-```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional — defaults to claude-haiku-4-5 if not set
-ANTHROPIC_MODEL=claude-haiku-4-5
-
-# LinkedIn publishing (required for POST /api/publish/linkedin)
-# Get your access token from the LinkedIn Developer Portal
-# Get your person URN from https://api.linkedin.com/v2/userinfo
-LINKEDIN_ACCESS_TOKEN=your_linkedin_personal_access_token
-LINKEDIN_PERSON_URN=urn:li:person:your_person_id
-
-# Gmail idea scanner
-# 1. Enable the Gmail API in Google Cloud
-# 2. Download OAuth desktop credentials
-# 3. Run: python orchestra/examples/gmail_auth.py
-GOOGLE_CREDENTIALS_PATH=credentials.json
-GOOGLE_TOKEN_PATH=token.json
-```
-
----
-
-## Your brand voice
-
-`orchestra/voice_profiles/default.yaml` is where Orchestra learns who you are. Edit it before your first run:
+`orchestra/voice_profiles/default.yaml` is how the engine learns to write like you. The Planner reads it on every run; the Critic uses it to flag off-brand output.
 
 ```yaml
 creator:
@@ -234,69 +239,85 @@ content_rules:
     - "here's the thing"
 ```
 
-The Planner reads this on every run. The Critic uses it to flag off-brand language. The more specific you make it, the better the output.
+To use a custom profile, pass `"voice_profile": "your_profile_name"` in the request. The engine loads `voice_profiles/your_profile_name.yaml`.
 
 ---
 
-## Adding a new platform agent
+## Adding a platform agent
 
 1. Create `orchestra/backend/agents/your_platform.py`
 2. Subclass `BaseAgent`, implement `build_prompt()` and `run()`
 3. Register in `orchestrator.py`
 
-That's it. One file, no framework to learn.
+One file. No framework. `Brief` and `AgentContext` are already there.
+
+---
+
+## Environment variables
+
+```bash
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional — model override
+ANTHROPIC_MODEL=claude-haiku-4-5
+
+# App-layer: LinkedIn publisher
+LINKEDIN_ACCESS_TOKEN=your_token
+LINKEDIN_PERSON_URN=urn:li:person:your_id
+
+# App-layer: Gmail scanner
+GOOGLE_CREDENTIALS_PATH=credentials.json
+GOOGLE_TOKEN_PATH=token.json
+```
 
 ---
 
 ## Tech stack
 
-| Layer        | Choice                              |
-| ------------ | ----------------------------------- |
-| LLM          | Claude (Anthropic)                  |
-| Backend      | Python + FastAPI                    |
-| App layer    | Gmail + LinkedIn integrations       |
-| Streaming    | Server-Sent Events                  |
-| Frontend     | Next.js 15 (app router, custom CSS) |
-| Voice config | YAML                                |
+| Layer                  | Choice                      |
+| ---------------------- | --------------------------- |
+| LLM                    | Claude (Anthropic)          |
+| Backend                | Python + FastAPI            |
+| Streaming              | Server-Sent Events          |
+| Voice config           | YAML                        |
+| Frontend demo          | Next.js 15                  |
+| App-layer integrations | Gmail API, LinkedIn UGC API |
 
-No LangChain. No vector databases. No Tailwind. No external queue. Runs entirely local except for the API call.
+No LangChain. No vector databases. No external queue. The core engine runs entirely local except for the Claude API call.
 
 ---
 
 ## Roadmap
 
-**Core**
+**Core engine**
+
 - [x] Planner → platform agents → critic pipeline
 - [x] Two-pass refinement (agents read each other's output)
-- [x] Brand voice YAML (Critic enforces it)
-- [x] FastAPI + SSE streaming endpoint
-- [x] Next.js frontend with live agent timeline
+- [x] Brand voice YAML loaded per-run
+- [x] FastAPI + SSE streaming (`POST /api/run`)
+- [x] Core / app-layer separation (routes, integrations, requirements)
+- [ ] Agent memory — retain voice and editorial context across runs
+- [ ] Human-in-the-loop — pause the pipeline for review between passes
+- [ ] Configurable pipeline — selectively enable agents per run
 
-**Publishing**
-- [x] LinkedIn publish endpoint (`POST /api/publish/linkedin`)
-- [ ] LinkedIn publish button in frontend (after generation completes)
-- [ ] Instagram publishing via Graph API
+**App surfaces** _(separate repos, built on the engine)_
 
-**Input sources**
-- [x] Gmail scanner endpoint (`GET /api/ideas/scan`)
-- [ ] Input source toggle in frontend (manual ↔ Gmail scan mode)
+- [ ] LinkedIn Chrome Extension — capture idea in browser, receive content, publish inline
+- [ ] CLI tool — lightweight personal wrapper around `POST /api/run`
+- [ ] Webhook receiver — trigger pipeline from Notion, email, or other input sources
 
-**Later**
-- [ ] Inline edit before publish
-- [ ] Export interaction log as image
-- [ ] Scheduling (APScheduler)
+**System evolution**
 
----
-
-## Contributing
-
-The best contribution is a new agent. If you add a platform that isn't here — Reddit, YouTube descriptions, newsletter, Substack — open a PR.
+- [ ] Per-run feedback — Critic scores inform future Planner behavior
+- [ ] Multi-voice support — swap profiles per surface or per platform
+- [ ] Output format extensions — newsletter, YouTube description, Reddit
 
 ---
 
 ## License
 
-MIT — use it, fork it, build on it.
+MIT — use it, fork it, build on top of it.
 
 ---
 
